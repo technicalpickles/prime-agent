@@ -125,6 +125,14 @@ pub fn key_event_to_id(key: &KeyEvent) -> Option<KeyId> {
                 s.push_str("super+enter");
                 return Some(s);
             }
+            // Ctrl-modified Enter gets its own identity for the same reason: a kitty
+            // terminal's `CSI 13;5u` (or the modifyOtherKeys `CSI 27;5;13~`) parses to
+            // Enter+CONTROL, and folding it into the bare `enter` id would submit when the
+            // user meant the modified key. The `ctrl+enter` id binds through
+            // keybindings.json like any other.
+            if ctrl {
+                return Some(modified_name("enter", true, alt, shift, false));
+            }
             if alt {
                 "alt+enter"
             } else if shift {
@@ -469,6 +477,35 @@ mod tests {
         let kb = crate::keybindings::KeybindingsManager::new();
         assert!(kb.matches("shift+enter", "tui.input.newLine"));
         assert!(!kb.matches("shift+enter", "tui.input.submit"));
+    }
+
+    /// Ctrl-modified Enter maps to its own id (a kitty terminal's `CSI 13;5u`, or the
+    /// modifyOtherKeys `CSI 27;5;13~`, parses to Enter+CONTROL): folding it into the bare
+    /// `enter` id would submit instead of firing the user's `ctrl+enter` binding.
+    #[test]
+    fn ctrl_modified_enter_maps_to_its_own_id() {
+        let ctrl_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+        assert_eq!(key_event_to_id(&ctrl_enter).as_deref(), Some("ctrl+enter"));
+        let shift_ctrl_enter =
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+        assert_eq!(
+            key_event_to_id(&shift_ctrl_enter).as_deref(),
+            Some("shift+ctrl+enter")
+        );
+        // The default bindings leave ctrl+enter unbound (it must not submit), and a user
+        // keybindings.json remap of `tui.input.newLine` to ctrl+enter fires on the id.
+        let mut kb = crate::keybindings::KeybindingsManager::new();
+        assert!(!kb.matches("ctrl+enter", "tui.input.submit"));
+        kb.set_user_bindings(
+            [(
+                "tui.input.newLine".to_string(),
+                vec!["ctrl+enter".to_string()],
+            )]
+            .into_iter()
+            .collect(),
+        );
+        assert!(kb.matches("ctrl+enter", "tui.input.newLine"));
+        assert!(!kb.matches("ctrl+enter", "tui.input.submit"));
     }
 
     /// Super-modified SPECIAL keys keep their super identity (Bugbot round-1 fix): an unbound Cmd
